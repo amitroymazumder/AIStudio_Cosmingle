@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { getCompatibilityReport } from './services/geminiService';
-import type { ZodiacSign, CompatibilityReport, User } from './types';
+import React, { useState, useCallback, useEffect } from 'react';
+import { getCompatibilityReport, getNatalChartReport } from './services/geminiService';
+import type { ZodiacSign, CompatibilityReport, User, Profile } from './types';
 import { ZODIAC_SIGNS } from './constants';
 import { ZodiacSelector } from './components/ZodiacSelector';
 import { CompatibilityResult } from './components/CompatibilityResult';
@@ -9,6 +9,9 @@ import { Footer } from './components/Footer';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { Auth } from './components/Auth';
 import { SchemaDisplay } from './components/SchemaDisplay';
+import { ProfileView } from './components/ProfileView';
+import { ProfileEditForm } from './components/ProfileEditForm';
+
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -18,18 +21,36 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [showSchema, setShowSchema] = useState<boolean>(false);
+  const [currentView, setCurrentView] = useState<'calculator' | 'profileView' | 'profileEdit'>('calculator');
+
+
+  useEffect(() => {
+    if (currentUser?.profile.natalChart) {
+      const sunSign = ZODIAC_SIGNS.find(sign => sign.name === currentUser.profile.natalChart?.sunSign);
+      if (sunSign) {
+        setPerson1Sign(sunSign);
+      }
+    }
+  }, [currentUser]);
+
 
   const handleLogin = (email: string) => {
-    // In a real app, you'd call your auth provider.
-    // Here, we'll create a mock user.
     const mockUser: User = {
       id: '123',
       email: email,
-      // Let's assign a random sign for demo purposes
-      zodiacSign: ZODIAC_SIGNS[Math.floor(Math.random() * ZODIAC_SIGNS.length)],
+      profile: {
+        username: 'CosmicExplorer',
+        fullName: 'Alex Doe',
+        bio: 'Just a soul exploring the universe, one star at a time.',
+        birthDate: '',
+        birthTime: '',
+        birthPlace: '',
+        avatarUrl: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(email)}`,
+        natalChart: null,
+      },
     };
     setCurrentUser(mockUser);
-    setPerson1Sign(mockUser.zodiacSign);
+    setCurrentView('calculator');
   };
 
   const handleLogout = () => {
@@ -37,6 +58,43 @@ const App: React.FC = () => {
     setPerson1Sign(null);
     setPerson2Sign(null);
     setReport(null);
+    setCurrentView('calculator');
+  };
+
+  const handleProfileUpdate = async (updatedProfile: Profile): Promise<void> => {
+    if (!currentUser) return;
+  
+    setIsLoading(true);
+    setError(null);
+    try {
+      let newNatalChart = updatedProfile.natalChart;
+      // If birth data is present and no chart exists, or if birth data has changed, generate a new one.
+      if (updatedProfile.birthDate && updatedProfile.birthTime && updatedProfile.birthPlace) {
+         if (!currentUser.profile.natalChart || 
+             updatedProfile.birthDate !== currentUser.profile.birthDate || 
+             updatedProfile.birthTime !== currentUser.profile.birthTime || 
+             updatedProfile.birthPlace !== currentUser.profile.birthPlace) 
+         {
+            newNatalChart = await getNatalChartReport(
+              updatedProfile.birthDate,
+              updatedProfile.birthTime,
+              updatedProfile.birthPlace
+            );
+         }
+      }
+  
+      setCurrentUser({
+        ...currentUser,
+        profile: { ...updatedProfile, natalChart: newNatalChart },
+      });
+      setCurrentView('profileView');
+    } catch (e) {
+      console.error(e);
+      setError('Failed to calculate astrological chart. Please check the birth details and try again.');
+      // Don't switch view on error so user can correct data
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleCalculate = useCallback(async () => {
@@ -58,20 +116,34 @@ const App: React.FC = () => {
     }
   }, [person1Sign, person2Sign]);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0c0a1e] to-[#1a1a3d] font-sans text-gray-200 flex flex-col items-center p-4 sm:p-6 md:p-8">
-      <Header user={currentUser} onLogout={handleLogout} />
-      <main className="w-full max-w-4xl flex-grow flex flex-col items-center justify-center">
-        {!currentUser ? (
-          <Auth onAuth={handleLogin} />
-        ) : (
+  const renderContent = () => {
+    if (!currentUser) {
+      return <Auth onAuth={handleLogin} />;
+    }
+
+    switch (currentView) {
+      case 'profileView':
+        return <ProfileView user={currentUser} onEdit={() => setCurrentView('profileEdit')} />;
+      case 'profileEdit':
+        return (
+          <ProfileEditForm
+            user={currentUser}
+            onSave={handleProfileUpdate}
+            onCancel={() => setCurrentView('profileView')}
+            isLoading={isLoading}
+            error={error}
+          />
+        );
+      case 'calculator':
+      default:
+        return (
           <>
             <div className="w-full bg-slate-900/50 backdrop-blur-sm rounded-2xl shadow-2xl shadow-indigo-500/10 border border-slate-800 p-6 sm:p-8 md:p-10 transform transition-all duration-500">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                 <ZodiacSelector
                   title="You"
                   selectedSign={person1Sign}
-                  onSignSelect={setPerson1Sign}
+                  onSignSelect={() => {}} // No-op as it's set by profile
                   disabled
                 />
                 <ZodiacSelector
@@ -112,7 +184,20 @@ const App: React.FC = () => {
               </div>
             )}
           </>
-        )}
+        )
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0c0a1e] to-[#1a1a3d] font-sans text-gray-200 flex flex-col items-center p-4 sm:p-6 md:p-8">
+      <Header 
+        user={currentUser} 
+        onLogout={handleLogout} 
+        onNavigate={(view) => setCurrentView(view)} 
+        currentView={currentView}
+      />
+      <main className="w-full max-w-4xl flex-grow flex flex-col items-center justify-center">
+        {renderContent()}
         {showSchema && <SchemaDisplay onClose={() => setShowSchema(false)} />}
       </main>
       <Footer onShowSchema={() => setShowSchema(true)} />
